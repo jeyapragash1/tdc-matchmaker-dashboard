@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1780655007599,
+    "customerId": 1,
+    "match": {
+      "id": 107,
+      "firstName": "Pooja",
+      "lastName": "Kapoor",
+      "city": "Delhi",
+      "age": 30,
+      "score": 100,
+      "label": "High Potential Match",
+      "explanation": "High Potential Match: This profile is ranked highly because the suggested profile is younger, income expectation fits the stated matching rule, height preference is aligned, both have matching views on children, they share a common language."
+    },
+    "sentAt": "2026-06-05T10:23:27.599Z"
+  }
+]
