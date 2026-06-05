@@ -24,11 +24,19 @@ export async function signIn(email: string, password: string) {
 }
 
 export function signOut() {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("demo_token");
+  }
   return fbSignOut(auth);
 }
 
 export async function getIdToken(): Promise<string | null> {
-  if (!auth.currentUser) return null;
+  if (!auth.currentUser) {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("demo_token");
+    }
+    return null;
+  }
   return auth.currentUser.getIdToken();
 }
 

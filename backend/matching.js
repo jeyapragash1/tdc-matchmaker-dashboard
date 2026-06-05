@@ -1,9 +1,16 @@
-// Simple matching logic ported from frontend matching.ts
+// Overhauled matching logic for Indian Matchmaking MVP
+
 function getLabel(score) {
   if (score >= 80) return "High Potential Match";
   if (score >= 60) return "Good Match";
   if (score >= 40) return "Moderate Match";
   return "Low Priority Match";
+}
+
+// Deterministic simulation of Kundali Guna Milan score (12-36)
+function calculateGunaMilan(cust, cand) {
+  const hash = (cust.id * cand.id * 17) % 25;
+  return hash + 12; // ranges from 12 to 36
 }
 
 function getMatches(customer, profiles) {
@@ -12,68 +19,116 @@ function getMatches(customer, profiles) {
   );
 
   const results = oppositeProfiles.map((profile) => {
-    let score = 0;
+    let rawScore = 0;
+    let maxRawScore = 135;
     const reasons = [];
 
+    // --- GENDER-SPECIFIC RULES ---
     if (customer.gender === "Male") {
+      // 1. Younger (20 pts)
       if (profile.age < customer.age) {
-        score += 25;
-        reasons.push("the suggested profile is younger");
+        rawScore += 20;
+        reasons.push("younger age");
       }
-
+      // 2. Earns less (15 pts)
       if (profile.income < customer.income) {
-        score += 20;
-        reasons.push("income expectation fits the stated matching rule");
+        rawScore += 15;
+        reasons.push("income alignment");
       }
-
+      // 3. Shorter (15 pts)
       if (profile.height < customer.height) {
-        score += 20;
-        reasons.push("height preference is aligned");
+        rawScore += 15;
+        reasons.push("height alignment");
       }
-
+      // 4. Matching kids view (15 pts)
       if (profile.wantKids === customer.wantKids) {
-        score += 25;
-        reasons.push("both have matching views on children");
-      }
-
-      if (
-        Array.isArray(profile.languages) &&
-        profile.languages.some((lang) => customer.languages.includes(lang))
-      ) {
-        score += 10;
-        reasons.push("they share a common language");
+        rawScore += 15;
+        reasons.push("similar kids preferences");
       }
     } else {
+      // For Female Customers
+      // 1. Similar designation/profession (20 pts)
       if (profile.designation === customer.designation) {
-        score += 20;
-        reasons.push("both have similar professional backgrounds");
+        rawScore += 20;
+        reasons.push("similar professional background");
       }
-
+      // 2. Matching relocation view (15 pts)
       if (profile.openToRelocate === customer.openToRelocate) {
-        score += 25;
-        reasons.push("their relocation preferences match");
+        rawScore += 15;
+        reasons.push("aligned relocation preference");
       }
-
+      // 3. Matching kids view (15 pts)
       if (profile.wantKids === customer.wantKids) {
-        score += 20;
-        reasons.push("both have compatible views on children");
+        rawScore += 15;
+        reasons.push("similar kids preferences");
       }
-
+      // 4. Values overlap (15 pts)
       if (
         Array.isArray(profile.values) &&
-        profile.values.some((value) => customer.values.includes(value))
+        profile.values.some((v) => customer.values.includes(v))
       ) {
-        score += 25;
-        reasons.push("they share important personal values");
+        rawScore += 15;
+        reasons.push("shared personal values");
       }
+    }
 
-      if (
-        Array.isArray(profile.languages) &&
-        profile.languages.some((lang) => customer.languages.includes(lang))
-      ) {
-        score += 10;
-        reasons.push("they share a common language");
-      }
+    // --- SHARED CULTURAL & LIFESTYLE RULES ---
+    // 1. Language overlap (10 pts)
+    if (
+      Array.isArray(profile.languages) &&
+      profile.languages.some((lang) => customer.languages.includes(lang))
+    ) {
+      rawScore += 10;
+      reasons.push("shared language");
+    }
+
+    // 2. Diet compatibility (10 pts)
+    if (profile.diet === customer.diet) {
+      rawScore += 10;
+      reasons.push("identical diet preference");
+    }
+
+    // 3. Religion matching (10 pts)
+    if (profile.religion === customer.religion) {
+      rawScore += 10;
+      reasons.push("same religion");
+    }
+
+    // 4. Caste matching (10 pts)
+    if (profile.caste === customer.caste) {
+      rawScore += 10;
+      reasons.push("same caste");
+    }
+
+    // 5. Manglik compatibility (15 pts)
+    // Manglik matches Manglik/Anshik, Non-Manglik matches Non-Manglik
+    const isCustomerManglik = customer.manglik === "Yes" || customer.manglik === "Anshik";
+    const isProfileManglik = profile.manglik === "Yes" || profile.manglik === "Anshik";
+    if (isCustomerManglik === isProfileManglik) {
+      rawScore += 15;
+      reasons.push("compatible Manglik status");
+    }
+
+    // 6. Kundali Guna Milan (15 pts if >= 18)
+    const gunaMilan = calculateGunaMilan(customer, profile);
+    if (gunaMilan >= 18) {
+      rawScore += 15;
+      reasons.push("strong Kundali compatibility");
+    }
+
+    // Scale raw score to percentage out of 100
+    let score = Math.round((rawScore / maxRawScore) * 100);
+
+    // Gotra check (Exogamy check): -30 pts penalty if same Gotra
+    let gotraConflict = false;
+    if (
+      customer.gotra &&
+      profile.gotra &&
+      customer.gotra.toLowerCase() === profile.gotra.toLowerCase()
+    ) {
+      gotraConflict = true;
+      score = Math.max(0, score - 30);
+      reasons.push("Gotra warning");
     }
 
     const label = getLabel(score);
@@ -82,19 +137,20 @@ function getMatches(customer, profiles) {
       profile,
       score,
       label,
-      explanation:
-        reasons.length > 0
-          ? `${label}: This profile is ranked highly because ${reasons.join(
-              ", "
-            )}.`
-          : `${label}: This profile has limited compatibility based on available data.`,
+      explanation: gotraConflict
+        ? `Warning: Gotra Conflict (${customer.gotra} Gotra matches). compatibility score has been penalized.`
+        : reasons.length > 0
+        ? `${label}: High compatibility due to ${reasons.join(", ")}.`
+        : `${label}: Profile has limited parameters overlap.`,
+      gunaMilan,
+      gotraConflict,
     };
   });
 
   return results.sort((a, b) => b.score - a.score).slice(0, 6);
 }
 
-// Generate 100 dummy profiles (same logic as frontend generator)
+// Generate 200 dummy profiles (matching src/data/profiles.ts)
 function generateProfiles() {
   const femaleNames = [
     "Aanya", "Diya", "Isha", "Kavya", "Meera", "Neha", "Pooja", "Riya", "Sneha", "Tanya",
@@ -122,10 +178,15 @@ function generateProfiles() {
   const degrees = ["B.Tech", "MBA", "B.Com", "MSc"];
   const castes = ["Brahmin", "Nair", "Rajput", "Agarwal"];
   const preferences = ["Yes", "No", "Maybe"];
+  const gotras = ["Kashyap", "Bharadwaj", "Vasishta", "Gautam", "Atri", "Vatsa", "Agastya"];
+  const manglikOptions = ["Yes", "No", "Anshik"];
+  const familyValuesOptions = ["Traditional", "Moderate", "Liberal"];
 
-  return Array.from({ length: 100 }, (_, i) => {
-    const isFemale = i < 50;
-    const name = isFemale ? femaleNames[i] : maleNames[i - 50];
+  return Array.from({ length: 200 }, (_, i) => {
+    const isFemale = i < 100;
+    const name = isFemale 
+      ? femaleNames[i % femaleNames.length] 
+      : maleNames[(i - 100) % maleNames.length];
 
     return {
       id: i + 101,
@@ -154,13 +215,20 @@ function generateProfiles() {
       openToPets: preferences[(i + 2) % 3],
       statusTag: "Available",
       values: ["Family-oriented", "Career-focused", "Ambitious"],
+
       motherTongue: i % 2 === 0 ? "Hindi" : "Tamil",
       diet: i % 2 === 0 ? "Vegetarian" : "Non-Vegetarian",
       smoking: "No",
       drinking: i % 4 === 0 ? "Occasionally" : "No",
       familyType: i % 2 === 0 ? "Nuclear" : "Joint",
+
+      manglik: manglikOptions[i % manglikOptions.length],
+      gotra: gotras[i % gotras.length],
+      familyValues: familyValuesOptions[i % familyValuesOptions.length],
+      horoscopeMatch: preferences[i % 3],
     };
   });
 }
 
 module.exports = { getMatches, generateProfiles };
+

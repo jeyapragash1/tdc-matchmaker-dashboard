@@ -86,10 +86,17 @@ try {
 }
 
 async function requireAuth(req, res, next) {
-  if (!firestore || !admin) return next(); // no firebase configured — allow through
   const authHeader = req.headers.authorization || '';
   const match = authHeader.match(/^Bearer (.*)$/);
   const idToken = match ? match[1] : null;
+
+  // Allow static demo token bypass in both Firestore and local JSON modes
+  if (idToken === 'demo-matchmaker-token-bypass') {
+    req.user = { uid: 'demo-matchmaker', email: 'matchmaker@email.com' };
+    return next();
+  }
+
+  if (!firestore || !admin) return next(); // no firebase configured — allow through
   if (!idToken) return res.status(401).json({ error: 'Missing or invalid Authorization header' });
   try {
     const decoded = await admin.auth().verifyIdToken(idToken);
@@ -106,7 +113,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 app.post('/auth/login', (req, res) => {
   const { username, password } = req.body || {};
   if (username === 'matchmaker' && password === 'password123') {
-    return res.json({ ok: true });
+    return res.json({ ok: true, token: 'demo-matchmaker-token-bypass' });
   }
 
   return res.status(401).json({ ok: false, message: 'Invalid credentials' });
@@ -147,6 +154,12 @@ app.get('/matches', requireAuth, async (req, res) => {
     wantKids: r.profile.wantKids,
     openToRelocate: r.profile.openToRelocate,
     motherTongue: r.profile.motherTongue,
+    diet: r.profile.diet,
+    gotra: r.profile.gotra,
+    manglik: r.profile.manglik,
+    familyValues: r.profile.familyValues,
+    gunaMilan: r.gunaMilan,
+    gotraConflict: r.gotraConflict,
   }));
 
   res.json({ matches: trimmed });
@@ -380,6 +393,75 @@ app.post('/ai/rerank', requireAuth, async (req, res) => {
     return res.json({ matches: reordered });
   } catch (err) {
     console.error('OpenAI error (rerank)', err?.message || err);
+    return res.status(500).json({ error: 'OpenAI error', details: err?.message });
+  }
+});
+
+// AI Fit Analysis: accepts { customer, match } and returns detailed compatibility analysis
+app.post('/generate-fit-analysis', requireAuth, async (req, res) => {
+  const { customer, match } = req.body || {};
+  if (!customer || !match) return res.status(400).json({ error: 'Missing customer or match profile' });
+
+  // Fallback: rule-based template if no OpenAI key
+  if (!process.env.OPENAI_API_KEY) {
+    let analysis = `### Astro-Compatibility Check\n`;
+    analysis += `- **Kundali Match**: Guna Milan score is **${match.gunaMilan || '18'}/36**. A score of 18 or above signifies good compatibility.\n`;
+    
+    const isCustomerManglik = customer.manglik === "Yes" || customer.manglik === "Anshik";
+    const isMatchManglik = match.manglik === "Yes" || match.manglik === "Anshik";
+    
+    if (isCustomerManglik && isMatchManglik) {
+      analysis += `- **Manglik Status**: Both are Manglik/Anshik, achieving astrological balance (Manglik Dosha cancellation).\n`;
+    } else if (!isCustomerManglik && !isMatchManglik) {
+      analysis += `- **Manglik Status**: Both are Non-Manglik, ensuring standard astrological compatibility.\n`;
+    } else {
+      analysis += `- **Manglik Status**: Warning: One is Manglik (${customer.manglik}) and the other is not (${match.manglik}). This mismatch might require further consultation.\n`;
+    }
+
+    if (customer.gotra && match.gotra && customer.gotra.toLowerCase() === match.gotra.toLowerCase()) {
+      analysis += `- **Gotra Exogamy**: **Gotra Conflict Detected** (both belong to the ${customer.gotra} Gotra). Same-Gotra matching is traditionally discouraged.\n`;
+    } else {
+      analysis += `- **Gotra Exogamy**: Passed. They belong to different Gotras (${customer.gotra || 'N/A'} vs ${match.gotra || 'N/A'}).\n`;
+    }
+
+    analysis += `\n### Lifestyle & Social Alignment\n`;
+    analysis += `- **Dietary Preference**: ${customer.diet === match.diet ? `Both share a ${customer.diet} diet, simplifying lifestyle integration.` : `Dietary difference (${customer.diet} vs ${match.diet}).`}\n`;
+    analysis += `- **Mother Tongue**: Shared mother tongue or language capability exists (${customer.motherTongue || 'Hindi'} & ${match.motherTongue || 'Hindi'}).\n`;
+    
+    analysis += `\n### Professional & Values Fit\n`;
+    analysis += `- **Career**: ${customer.firstName} is a ${customer.designation} at ${customer.company || 'their firm'} and ${match.firstName} works as a ${match.designation || 'professional'} at ${match.company || 'their firm'}.\n`;
+    analysis += `- **Family Values**: Compatible family background values (${customer.familyValues || 'Moderate'} vs ${match.familyValues || 'Moderate'}).\n`;
+    
+    return res.json({ analysis });
+  }
+
+  try {
+    const { Configuration, OpenAIApi } = require('openai');
+    const configuration = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAIApi(configuration);
+
+    const prompt = `You are a professional matchmaker. Write a comprehensive, elegant, structured 3-paragraph compatibility analysis between the following two profiles.
+Customer: ${JSON.stringify(customer)}
+Candidate Match: ${JSON.stringify(match)}
+
+Structure your response into 3 distinct sections with markdown subheadings:
+1. ### Astro & Cultural Alignment: Discuss their Guna Milan score (${match.gunaMilan || 'N/A'}), Gotra check (Customer's Gotra is ${customer.gotra || 'N/A'} and Candidate's Gotra is ${match.gotra || 'N/A'}; note if they match it is a conflict), and Manglik status.
+2. ### Lifestyle & Dietary Habits: Discuss their diet, languages, and general habits.
+3. ### Professional & Family Value Synergy: Discuss their career, designation, family values, and what common themes they can talk about.
+
+Make the tone highly professional, encouraging, yet honest.`;
+
+    const completion = await openai.createChatCompletion({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 600,
+      temperature: 0.7,
+    });
+
+    const analysis = completion.data.choices[0].message.content.trim();
+    return res.json({ analysis });
+  } catch (err) {
+    console.error('OpenAI error (fit-analysis)', err?.message || err);
     return res.status(500).json({ error: 'OpenAI error', details: err?.message });
   }
 });

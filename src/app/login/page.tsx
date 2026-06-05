@@ -1,13 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { signIn } from "@/lib/firebaseClient";
 
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("demo_token");
+    }
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -16,7 +22,6 @@ export default function LoginPage() {
     // Try Firebase sign-in first (if configured). If it fails, fall back to backend auth.
     try {
       await signIn(username, password);
-      // Optionally, you can POST token to backend to verify/create session. For now we just redirect.
       router.push("/dashboard");
       return;
     } catch {
@@ -31,6 +36,10 @@ export default function LoginPage() {
       });
 
       if (!res.ok) throw new Error("Invalid credentials");
+      const json = await res.json();
+      if (json.token) {
+        localStorage.setItem("demo_token", json.token);
+      }
       router.push("/dashboard");
     } catch {
       alert("Use username: matchmaker and password: password123");

@@ -1,7 +1,25 @@
-# Submission Write-up
+# Submission Write-up - TDC Matchmaker Dashboard & Algo MVP
 
-This project uses Next.js for the frontend and a separate Express backend to keep the matchmaker dashboard simple, modular, and easy to deploy. The frontend focuses on the user experience: login, customer browsing, detailed biodata, and a compact match review flow. The backend owns the matching logic, notes persistence, and AI-powered intro generation, which keeps sensitive operations server-side and lets the UI stay fast and readable.
+This project uses Next.js 16.2.7 (Turbopack) for the frontend dashboard and a separate Node.js/Express backend on port 4000. It is designed to help the TDC matchmaking team manage clients, review verified biodata, run advanced matchmaking queries, write interaction notes, and generate candidate intros. The frontend is built as a Client Component system with automatic SSR-hydration protection, offering a highly responsive glassmorphism aesthetic, stats summaries, and instant transitions. The backend provides secure API operations, authentication middleware (token-based check when Firebase is enabled), a self-verifying Firestore startup fallback (automatically switching to local JSON files if Firestore API is disabled or inaccessible), and an AI generation engine.
 
-The matching logic is intentionally gender-specific to match the assignment brief. For male customers, the scoring favors younger, lower-income, shorter profiles with compatible views on children. For female customers, the scoring focuses on professional compatibility, shared values, relocation preferences, and language overlap. The system returns a score, label, and explanation so matchmakers can see why a profile ranked well. This makes the logic transparent and easy to extend later.
+## The Matching Pool & Algorithm
+To satisfy the requirement of at least 100 opposite-gender candidates, the profile database generates **200 dummy profiles** (100 male and 100 female profiles). This guarantees that whether the active customer is male or female, there is always a pool of at least 100 candidates of the opposite gender. 
 
-AI is used in a practical way through several backend endpoints. `POST /generate-intro` creates a single personalized intro; `POST /generate-intros` can produce multiple variants for A/B testing; and `POST /ai/rerank` can ask an LLM to re-rank candidate matches. When an OpenAI key is configured the endpoints use the OpenAI API; otherwise they return safe template fallbacks so the app works locally. For data storage, the backend can use Firestore when Firebase credentials are configured, and it falls back to local JSON files for offline development. The main assumption is that this MVP is for internal operations, so the priority is speed, clarity, and a realistic demo flow rather than a fully production-hardened system.
+The algorithm has been overhauled to integrate specialized **Indian Matchmaking Rules** alongside the original requirements, computing a score out of 100 based on a 135-point raw weight structure:
+1. **Gender-Specific Weights (65 pts)**:
+   - **For Male Customers**: Younger (20 pts), earns less (15 pts), shorter (15 pts), and matching kids views (15 pts).
+   - **For Female Customers**: Similar professional designation (20 pts), matching relocation views (15 pts), matching kids views (15 pts), and shared values (15 pts).
+2. **Shared Cultural & Lifestyle Weights (70 pts)**:
+   - **Diet Alignment (10 pts)**: vegetarian vs non-vegetarian preferences must align.
+   - **Language Overlap (10 pts)**: sharing at least one common language.
+   - **Religion (10 pts) & Caste Matching (10 pts)**.
+   - **Manglik Compatibility (15 pts)**: Aligning Manglik with Manglik/Anshik and Non-Manglik with Non-Manglik.
+   - **Kundali Guna Milan (15 pts)**: A simulated Guna Milan score out of 36 is computed deterministically. If the score is >= 18, the match receives a 15-point bonus.
+3. **Gotra Exogamy Penalty (-30 pts & warning badge)**: Belonging to the same Gotra is traditionally avoided in Hindu marriages. If the customer and candidate share a Gotra, a -30 point penalty is applied, and a warning is flagged on the dashboard.
+
+## AI Features & Fallbacks
+Two AI-driven features are implemented in the Express backend:
+1. **Email Intro Generator (`POST /generate-intro`)**: Drafts a friendly 2-sentence introduction email with custom conversation starters. It displays in a smooth, custom copy-to-clipboard modal in the frontend, preventing intrusive popups.
+2. **AI Compatibility Report (`POST /generate-fit-analysis`)**: Analyzes the specific strengths, lifestyle alignments, and astrological factors of the two profiles, structured into three distinct markdown headers. 
+
+Both AI features are designed with **robust, rich fallbacks**: if `OPENAI_API_KEY` is not set or the API fails, the system automatically uses a detailed, structured rule-based template parser on the server (or client) to populate the emails and reports with the correct Guna Milan, Gotra validation, diet, and career information. This ensures the app is fully functional and offers a premium user experience out-of-the-box.
